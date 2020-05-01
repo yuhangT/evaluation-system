@@ -86,15 +86,15 @@ class EEDataset(BaseNLPDataset):
 
 
 def main():
-    # 加载PaddleHub 预训练模型ERNIE Tiny/RoBERTa large
+    # Load Paddlehub pretrained model
     # 更多预训练模型 https://www.paddlepaddle.org.cn/hublist?filter=en_category&value=SemanticModel
-    # model_name = "ernie_tiny"
+    #model_name = "ernie_tiny"
     model_name = "chinese-roberta-wwm-ext-large"
     module = hub.Module(name=model_name)
     inputs, outputs, program = module.context(
         trainable=True, max_seq_len=args.max_seq_len)
 
-    # 加载数据并通过SequenceLabelReader读取数据
+    # Download dataset and use SequenceLabelReader to read dataset
     dataset = EEDataset(args.data_dir, schema_labels, model=args.do_model)
     reader = hub.reader.SequenceLabelReader(
         dataset=dataset,
@@ -103,35 +103,36 @@ def main():
         sp_model_path=module.get_spm_path(),
         word_dict_path=module.get_word_dict_path())
 
-    # 构建序列标注任务迁移网络
-    # 使用ERNIE模型字级别的输出sequence_output作为迁移网络的输入
+    # Construct transfer learning network
+    # Use "sequence_output" for token-level output.
     sequence_output = outputs["sequence_output"]
 
-    # 设置模型program需要输入的变量feed_list
-    # 必须按照以下顺序设置
+    # Setup feed list for data feeder
+    # Must feed all the tensor of module need
     feed_list = [
         inputs["input_ids"].name, inputs["position_ids"].name,
         inputs["segment_ids"].name, inputs["input_mask"].name
     ]
 
-    # 选择优化策略
+    # Select a finetune strategy
     strategy = hub.AdamWeightDecayStrategy(
         warmup_proportion=args.warmup_proportion,
         weight_decay=args.weight_decay,
         learning_rate=args.learning_rate)
 
-    # 配置运行设置
+    # Setup runing config for PaddleHub Finetune API
     config = hub.RunConfig(
             eval_interval=args.eval_step,
             save_ckpt_interval=args.model_save_step,
             use_data_parallel=args.use_data_parallel,
-            use_cuda=True,
+            use_cuda=args.use_gpu,
             num_epoch=args.num_epoch,
             batch_size=args.batch_size,
             checkpoint_dir=args.checkpoint_dir,
             strategy=strategy)
 
-    # 构建序列标注迁移任务
+    # Define a sequence labeling finetune task by PaddleHub's API
+    # If add crf, the network use crf as decoder
     seq_label_task = hub.SequenceLabelTask(
         data_reader=reader,
         feature=sequence_output,
@@ -141,8 +142,8 @@ def main():
         config=config,
         add_crf=args.add_crf)
 
-    # PaddleHub Finetune API
-    # 将自动训练、评测并保存模型
+    # Finetune and evaluate model by PaddleHub's API
+    # will finish training, evaluation, testing, save model automatically
     if args.do_train:
         print("start finetune and eval process")
         seq_label_task.finetune_and_eval()
